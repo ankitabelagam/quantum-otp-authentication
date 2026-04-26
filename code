@@ -1,0 +1,190 @@
+from flask import Flask, request, render_template_string
+import random
+
+app = Flask(__name__)
+
+otp_global = ""
+
+# ---------- COMMON STYLE (USED EVERYWHERE) ---------- #
+STYLE = """
+<style>
+body {
+    margin: 0;
+    font-family: 'Segoe UI', sans-serif;
+    background: #0b0b0b;
+    color: #FFD700;
+    text-align: center;
+}
+
+/* Diagonal animation */
+body::before {
+    content: "";
+    position: fixed;
+    width: 200%;
+    height: 200%;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(255,215,0,0.05) 0px,
+        rgba(255,215,0,0.05) 2px,
+        transparent 2px,
+        transparent 20px
+    );
+    animation: move 8s linear infinite;
+    z-index: -1;
+}
+
+@keyframes move {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(-100px, -100px); }
+}
+
+.card {
+    background: #121212;
+    padding: 40px;
+    border-radius: 15px;
+    display: inline-block;
+    margin-top: 120px;
+    box-shadow: 0 0 25px rgba(255, 215, 0, 0.2);
+    border: 1px solid rgba(255, 215, 0, 0.3);
+}
+
+button {
+    padding: 12px 22px;
+    margin: 10px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(45deg, #FFD700, #FFA500);
+    color: black;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+button:hover {
+    transform: scale(1.08);
+    box-shadow: 0 0 15px #FFD700;
+}
+
+input {
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #FFD700;
+    margin: 10px;
+    width: 220px;
+    text-align: center;
+    background: #1a1a1a;
+    color: #FFD700;
+}
+
+h2 {
+    text-shadow: 0 0 10px #FFD700;
+}
+</style>
+"""
+
+# ---------- BB84 ---------- #
+
+def generate_bits(n):
+    return [random.randint(0,1) for _ in range(n)]
+
+def generate_bases(n):
+    return [random.choice(['+', 'x']) for _ in range(n)]
+
+def measure(bits, sb, rb):
+    return [bits[i] if sb[i]==rb[i] else random.randint(0,1) for i in range(len(bits))]
+
+def sift_key(bits, sb, rb):
+    return [bits[i] for i in range(len(bits)) if sb[i]==rb[i]]
+
+def calculate_qber(a,b):
+    return sum(1 for i in range(len(a)) if a[i]!=b[i]) / len(a) if a else 0
+
+def key_to_otp(key):
+    return str(int(''.join(map(str,key[:6])),2)).zfill(6)
+
+# ---------- ROUTES ---------- #
+
+@app.route("/")
+def home():
+    return render_template_string(f"""
+    {STYLE}
+    <div class="card">
+        <h2>🔐 Quantum OTP Authentication</h2>
+
+        <form action="/generate">
+            <button>⚡ Generate OTP</button>
+        </form>
+
+        <form action="/verify" method="post">
+            <input name="otp" placeholder="Enter OTP" required>
+            <br>
+            <button>🚀 Login</button>
+        </form>
+    </div>
+    """)
+
+@app.route("/generate")
+def generate():
+    global otp_global
+
+    n = 20
+    bits = generate_bits(n)
+    ab = generate_bases(n)
+    bb = generate_bases(n)
+
+    measured = measure(bits, ab, bb)
+    ka = sift_key(bits, ab, bb)
+    kb = sift_key(measured, ab, bb)
+
+    qber = calculate_qber(ka, kb)
+
+    if qber > 0.25:
+        return render_template_string(f"""
+        {STYLE}
+        <div class="card">
+            <h2 style="color:red;">⚠️ Eavesdropping Detected</h2>
+            <button onclick="window.location.href='/'">Retry</button>
+        </div>
+        """)
+
+    otp_global = key_to_otp(ka)
+
+    return render_template_string(f"""
+    {STYLE}
+    <div class="card">
+        <h2>✅ OTP Generated</h2>
+        <h1>{otp_global}</h1>
+        <p>QBER: {qber:.2f}</p>
+        <button onclick="window.location.href='/'">⬅ Back</button>
+    </div>
+    """)
+
+@app.route("/verify", methods=["POST"])
+def verify():
+    global otp_global
+    user = request.form.get("otp","").strip()
+
+    if otp_global == "":
+        return "<h3>Generate OTP first</h3>"
+
+    if user == otp_global:
+        return render_template_string(f"""
+        {STYLE}
+        <div class="card">
+            <h2>✅ Login Successful</h2>
+            <button onclick="window.location.href='/'">⬅ Back</button>
+        </div>
+        """)
+    else:
+        return render_template_string(f"""
+        {STYLE}
+        <div class="card">
+            <h2 style="color:red;">❌ Invalid OTP</h2>
+            <button onclick="window.location.href='/'">🔁 Try Again</button>
+        </div>
+        """)
+
+# ---------- RUN ---------- #
+
+if __name__ == "__main__":
+    app.run(debug=True)
